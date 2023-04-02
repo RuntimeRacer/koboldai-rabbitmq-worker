@@ -84,7 +84,7 @@ class RabbitMQWorker:
     """
     def handle_prompt_message(self, channel, method, properties, body):
         # Parse message
-        print("Received message from channel '{}': {}".format(channel, body))
+        print("Received message from channel '{}': {}".format(self.poll_channel, body))
         data = json.loads(body)
         message_id = data['MessageID']
         message_body = data['MessageBody']
