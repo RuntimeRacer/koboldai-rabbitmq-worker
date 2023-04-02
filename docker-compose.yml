@@ -1,0 +1,24 @@
+version: "3.9"
+services:
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: 'rabbitmq'
+    environment:
+      - RABBITMQ_DEFAULT_USER=user
+      - RABBITMQ_DEFAULT_PASS=password
+    ports:
+      - "5672:5672"   # AMQP Port
+      - "5671:5671"   # AMQP over TLS Port
+      - "15672:15672" # Port for Management WebUI
+    volumes:
+      - ~/rabbitmq/conf/rabbitmq.config:/etc/rabbitmq/rabbitmq.config
+      - ~/rabbitmq/pki/:/etc/pki/ # Required if you want to use secure AMQP
+      - ~/rabbitmq/data/:/var/lib/rabbitmq/
+      - ~/rabbitmq/log/:/var/log/rabbitmq/
+    networks:
+      - rabbitmq_net
+    restart: unless-stopped
+
+networks:
+  rabbitmq_net:
+    driver: bridge
