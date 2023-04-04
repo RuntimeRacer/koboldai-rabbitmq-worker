@@ -73,11 +73,13 @@ class RabbitMQWorker:
     {
         "MessageID": str, // ID of the message defined by the sender, can be general UUID
         "MessageBody": str // Request Body 
+        "MessageMetadata": str // Metadata for context to be shared between request sender and result receiver
     }
     
     Returns the following structure in result:
     {
         "MessageID": str, // ID of the message defined by the sender, can be general UUID
+        "MessageMetadata": str // Metadata for context to be shared between request sender and result receiver
         "ResultStatus": str, // Status code of the response
         "ResultBody": str // Body of the response
     }
@@ -88,6 +90,7 @@ class RabbitMQWorker:
         data = json.loads(body)
         message_id = data['MessageID']
         message_body = data['MessageBody']
+        message_metadata = data['MessageMetadata']
 
         # Send Request to target KoboldAI server
         headers = {
@@ -99,6 +102,7 @@ class RabbitMQWorker:
         # Build Result
         result = {
             "MessageID": message_id,
+            "MessageMetadata": message_metadata,
             "ResultStatus": result.status_code,
             "ResultBody": result.text,
         }
