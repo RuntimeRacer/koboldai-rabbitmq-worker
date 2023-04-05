@@ -90,7 +90,7 @@ class RabbitMQWorker:
         data = json.loads(body)
         message_id = data['MessageID']
         message_body = data['MessageBody']
-        message_metadata = data['MessageMetadata']
+        message_metadata = data['MessageMetadata'] if 'MessageMetadata' in data else ''
 
         # Send Request to target KoboldAI server
         headers = {
