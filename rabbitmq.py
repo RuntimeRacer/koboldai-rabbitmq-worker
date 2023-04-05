@@ -68,6 +68,7 @@ class RabbitMQWorker:
         # Start listening
         self.polling_channel_ref.basic_consume(queue=self.poll_channel, on_message_callback=self.handle_prompt_message, auto_ack=True)
         print("Listening for messages on queue {}...".format(self.poll_channel))
+        sys.stdout.flush()
         self.polling_channel_ref.start_consuming()
 
     """
@@ -113,6 +114,8 @@ class RabbitMQWorker:
         # Publish to result queue
         print("Sending result for message ID '{}': {}".format(message_id, result_json))
         self.pushing_channel_ref.basic_publish(exchange='', routing_key=self.push_channel, body=result_json)
+        # Flush stdout on every message handling
+        sys.stdout.flush()
 
     def shutdown(self):
         if self.polling_channel_ref is not None:
