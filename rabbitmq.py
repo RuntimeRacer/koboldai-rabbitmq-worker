@@ -47,20 +47,10 @@ class RabbitMQWorker:
             self.polling_connection = pika.BlockingConnection(pika.ConnectionParameters(
                 host=self.rabbitmq_host,
                 port=self.rabbitmq_port,
-                credentials=pika.credentials.PlainCredentials(username=self.rabbitmq_user, password=self.rabbitmq_pass),
-                heartbeat=30
+                credentials=pika.credentials.PlainCredentials(username=self.rabbitmq_user, password=self.rabbitmq_pass)
             ))
             self.polling_channel_ref = self.polling_connection.channel()
             self.polling_channel_ref.queue_declare(queue=self.poll_channel)
-
-            self.pushing_connection = pika.BlockingConnection(pika.ConnectionParameters(
-                host=self.rabbitmq_host,
-                port=self.rabbitmq_port,
-                credentials=pika.credentials.PlainCredentials(username=self.rabbitmq_user, password=self.rabbitmq_pass),
-                heartbeat=30
-            ))
-            self.pushing_channel_ref = self.pushing_connection.channel()
-            self.pushing_channel_ref.queue_declare(queue=self.push_channel)
         except RuntimeError as e:
             print("Unable to connect to RabbitMQ host: {}".format(str(e)))
             raise e
@@ -113,7 +103,16 @@ class RabbitMQWorker:
 
         # Publish to result queue
         print("Sending result for message ID '{}': {}".format(message_id, result_json))
+        self.pushing_connection = pika.BlockingConnection(pika.ConnectionParameters(
+            host=self.rabbitmq_host,
+            port=self.rabbitmq_port,
+            credentials=pika.credentials.PlainCredentials(username=self.rabbitmq_user, password=self.rabbitmq_pass)
+        ))
+        self.pushing_channel_ref = self.pushing_connection.channel()
+        self.pushing_channel_ref.queue_declare(queue=self.push_channel)
         self.pushing_channel_ref.basic_publish(exchange='', routing_key=self.push_channel, body=result_json)
+        self.pushing_channel_ref.close()
+        self.pushing_connection.close()
         # Flush stdout on every message handling
         sys.stdout.flush()
 
@@ -122,9 +121,6 @@ class RabbitMQWorker:
             self.polling_channel_ref.stop_consuming()
         if self.polling_connection is not None:
             self.polling_connection.close()
-        if self.pushing_connection is not None:
-            self.pushing_connection.close()
-
 
 if __name__ == "__main__":
     global _polling_connection, _polling_channel, _pushing_connection
