@@ -51,7 +51,7 @@ class RabbitMQWorker:
                 heartbeat=30
             ))
             self.polling_channel_ref = self.polling_connection.channel()
-            self.polling_channel_ref.queue_declare(queue=self.poll_channel)
+            self.polling_channel_ref.queue_declare(queue=self.poll_channel, durable=True)
         except RuntimeError as e:
             print("Unable to connect to RabbitMQ host: {}".format(str(e)))
             raise e
@@ -111,7 +111,7 @@ class RabbitMQWorker:
             heartbeat=30
         ))
         self.pushing_channel_ref = self.pushing_connection.channel()
-        self.pushing_channel_ref.queue_declare(queue=self.push_channel)
+        self.pushing_channel_ref.queue_declare(queue=self.push_channel, durable=True)
         self.pushing_channel_ref.basic_publish(exchange='', routing_key=self.push_channel, body=result_json)
         self.pushing_channel_ref.close()
         self.pushing_connection.close()
