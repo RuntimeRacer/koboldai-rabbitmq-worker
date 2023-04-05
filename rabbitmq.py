@@ -47,7 +47,8 @@ class RabbitMQWorker:
             self.polling_connection = pika.BlockingConnection(pika.ConnectionParameters(
                 host=self.rabbitmq_host,
                 port=self.rabbitmq_port,
-                credentials=pika.credentials.PlainCredentials(username=self.rabbitmq_user, password=self.rabbitmq_pass)
+                credentials=pika.credentials.PlainCredentials(username=self.rabbitmq_user, password=self.rabbitmq_pass),
+                heartbeat=30
             ))
             self.polling_channel_ref = self.polling_connection.channel()
             self.polling_channel_ref.queue_declare(queue=self.poll_channel)
@@ -106,7 +107,8 @@ class RabbitMQWorker:
         self.pushing_connection = pika.BlockingConnection(pika.ConnectionParameters(
             host=self.rabbitmq_host,
             port=self.rabbitmq_port,
-            credentials=pika.credentials.PlainCredentials(username=self.rabbitmq_user, password=self.rabbitmq_pass)
+            credentials=pika.credentials.PlainCredentials(username=self.rabbitmq_user, password=self.rabbitmq_pass),
+            heartbeat=30
         ))
         self.pushing_channel_ref = self.pushing_connection.channel()
         self.pushing_channel_ref.queue_declare(queue=self.push_channel)
