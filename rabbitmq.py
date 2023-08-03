@@ -5,9 +5,13 @@ import json
 import os
 import argparse
 import sys
+import time
 
 import pika
 import requests
+import logging
+
+from logging import Formatter
 
 
 class RabbitMQWorker:
@@ -53,12 +57,12 @@ class RabbitMQWorker:
             self.polling_channel_ref = self.polling_connection.channel()
             self.polling_channel_ref.queue_declare(queue=self.poll_channel, durable=True)
         except RuntimeError as e:
-            print("Unable to connect to RabbitMQ host: {}".format(str(e)))
+            logging.error("Unable to connect to RabbitMQ host: {}".format(str(e)))
             raise e
 
         # Start listening
         self.polling_channel_ref.basic_consume(queue=self.poll_channel, on_message_callback=self.handle_prompt_message, auto_ack=True)
-        print("Listening for messages on queue {}...".format(self.poll_channel))
+        logging.info("Listening for messages on queue {}...".format(self.poll_channel))
         sys.stdout.flush()
         self.polling_channel_ref.start_consuming()
 
@@ -80,11 +84,18 @@ class RabbitMQWorker:
     """
     def handle_prompt_message(self, channel, method, properties, body):
         # Parse message
-        print("Received message from channel '{}': {}".format(self.poll_channel, body))
+        logging.info("Received message from channel '{}': {}".format(self.poll_channel, body))
         data = json.loads(body)
-        message_id = data['MessageID']
-        message_body = data['MessageBody']
+        message_id = data['MessageID'] if 'MessageID' in data else ''
+        message_body = data['MessageBody'] if 'MessageBody' in data else ''
         message_metadata = data['MessageMetadata'] if 'MessageMetadata' in data else ''
+
+        # Only process valid data
+        if len(message_id) == 0 or len(message_body) == 0:
+            logging.warning("Message received was invalid. Skipping...")
+            # Flush stdout on every message handling
+            sys.stdout.flush()
+            return
 
         # Send Request to target KoboldAI server
         headers = {
@@ -103,7 +114,7 @@ class RabbitMQWorker:
         result_json = json.dumps(result)
 
         # Publish to result queue
-        print("Sending result for message ID '{}': {}".format(message_id, result_json))
+        logging.info("Sending result for message ID '{}': {}".format(message_id, result_json))
         self.pushing_connection = pika.BlockingConnection(pika.ConnectionParameters(
             host=self.rabbitmq_host,
             port=self.rabbitmq_port,
@@ -127,6 +138,14 @@ class RabbitMQWorker:
 if __name__ == "__main__":
     global _polling_connection, _polling_channel, _pushing_connection
 
+    # Init logger
+    Formatter.converter = time.gmtime
+    logging.basicConfig(
+        level=logging.INFO,
+        format='[%(asctime)s] %(levelname)s: %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S %z'
+    )
+
     # Parse from arguments
     parser = argparse.ArgumentParser()
 
@@ -147,7 +166,7 @@ if __name__ == "__main__":
     try:
         worker.run()
     except KeyboardInterrupt:
-        print("Manual Interrupt!")
+        logging.info("Manual Interrupt!")
         # Try clean shutdown
         worker.shutdown()
         try:

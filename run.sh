@@ -9,6 +9,7 @@ PUSH_QUEUE=$6
 KOBOLD_AI_HOST=$7
 
 until python3 rabbitmq.py -u "$RABBITMQ_USER" -p "$RABBITMQ_PASS" -rh "$RABBITMQ_HOST" -rp "$RABBITMQ_PORT" -pl "$POLL_QUEUE" -pu "$PUSH_QUEUE" -kh "$KOBOLD_AI_HOST"; do
-    echo "RabbitMQ worker crashed with exit code $?.  Respawning.." >&2
+    timestamp=$(date -u +"[%Y-%m-%d %H:%M:%S %z]")
+    echo "${timestamp} RabbitMQ worker crashed with exit code $?.  Respawning.." >&2
     sleep 1
 done
