@@ -145,6 +145,8 @@ if __name__ == "__main__":
         format='[%(asctime)s] %(levelname)s: %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S %z'
     )
+    # Pika log level to warning to avoid logspam
+    logging.getLogger("pika").setLevel(logging.WARNING)
 
     # Parse from arguments
     parser = argparse.ArgumentParser()
