@@ -63,7 +63,6 @@ class RabbitMQWorker:
         # Start listening
         self.polling_channel_ref.basic_consume(queue=self.poll_channel, on_message_callback=self.handle_prompt_message, auto_ack=True)
         logging.info("Listening for messages on queue {}...".format(self.poll_channel))
-        sys.stdout.flush()
         self.polling_channel_ref.start_consuming()
 
     """
@@ -93,8 +92,6 @@ class RabbitMQWorker:
         # Only process valid data
         if len(message_id) == 0 or len(message_body) == 0:
             logging.warning("Message received was invalid. Skipping...")
-            # Flush stdout on every message handling
-            sys.stdout.flush()
             return
 
         # Send Request to target KoboldAI server
@@ -126,8 +123,6 @@ class RabbitMQWorker:
         self.pushing_channel_ref.basic_publish(exchange='', routing_key=self.push_channel, body=result_json)
         self.pushing_channel_ref.close()
         self.pushing_connection.close()
-        # Flush stdout on every message handling
-        sys.stdout.flush()
 
     def shutdown(self):
         if self.polling_channel_ref is not None:
@@ -135,12 +130,14 @@ class RabbitMQWorker:
         if self.polling_connection is not None:
             self.polling_connection.close()
 
+
 if __name__ == "__main__":
     global _polling_connection, _polling_channel, _pushing_connection
 
     # Init logger
     Formatter.converter = time.gmtime
     logging.basicConfig(
+        stream=sys.stdout,
         level=logging.INFO,
         format='[%(asctime)s] %(levelname)s: %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S %z'
