@@ -5,6 +5,7 @@ import json
 import os
 import argparse
 import sys
+import threading
 import time
 
 import pika
@@ -15,7 +16,17 @@ from logging import Formatter
 
 
 class RabbitMQWorker:
-    def __init__(self, rabbitmq_user: str, rabbitmq_pass: str, rabbitmq_host: str, rabbitmq_port: int, poll_channel: str, push_channel: str, koboldai_host: str):
+    def __init__(
+            self,
+            rabbitmq_user: str,
+            rabbitmq_pass: str,
+            rabbitmq_host: str,
+            rabbitmq_port: int,
+            poll_channel: str,
+            push_channel: str,
+            kobold_ai_host: str,
+            cache_size: int = 1
+    ):
         # Very simple validity checks
         if len(rabbitmq_user) == 0:
             raise RuntimeError("rabbitmq_user not set")
@@ -27,8 +38,10 @@ class RabbitMQWorker:
             raise RuntimeError("poll_channel not set")
         if len(push_channel) == 0:
             raise RuntimeError("push_channel not set")
-        if len(koboldai_host) == 0:
+        if len(kobold_ai_host) == 0:
             raise RuntimeError("koboldai_host not set")
+        if cache_size < 0:
+            raise RuntimeError("invalid cache size")
 
         # Setup Params
         self.rabbitmq_user = rabbitmq_user
@@ -37,9 +50,12 @@ class RabbitMQWorker:
         self.rabbitmq_port = rabbitmq_port
         self.poll_channel = poll_channel
         self.push_channel = push_channel
-        self.koboldai_host = koboldai_host
+        self.kobold_ai_host = kobold_ai_host
 
         # Handling params
+        self.cache_thread = None
+        self.cache_size = cache_size
+        self.cached_messages = []
         self.polling_connection = None
         self.polling_channel_ref = None
         self.pushing_connection = None
@@ -59,6 +75,10 @@ class RabbitMQWorker:
         except RuntimeError as e:
             logging.error("Unable to connect to RabbitMQ host: {}".format(str(e)))
             raise e
+
+        # Add cache processing thread and start it
+        self.cache_thread = CacheProcessingThread(worker=self)
+        self.cache_thread.start()
 
         # Start listening
         self.polling_channel_ref.basic_consume(queue=self.poll_channel, on_message_callback=self.handle_prompt_message, auto_ack=True)
@@ -81,6 +101,7 @@ class RabbitMQWorker:
         "ResultBody": str // Body of the response
     }
     """
+
     def handle_prompt_message(self, channel, method, properties, body):
         # Parse message
         logging.info("Received message from channel '{}': {}".format(self.poll_channel, body))
@@ -94,41 +115,86 @@ class RabbitMQWorker:
             logging.warning("Message received was invalid. Skipping...")
             return
 
-        # Send Request to target KoboldAI server
-        headers = {
-            "Content-Type": "application/json",
-        }
-        url = self.koboldai_host + "/api/v1/generate"
-        result = requests.post(url=url, headers=headers, json=message_body)
+        # Add to cache - Before checking cache size
+        # This ensures we always process at least one message, even if cache is set to 0, because
+        # due to async nature oft the worker, it will always pull at least 1 message no matter what.
+        # Cache check will check cache size after adding the message, so this pulling connection is blocked until
+        # Cache is freed up again.
+        self.cached_messages.append({
+            'MessageID': message_id,
+            'MessageBody': message_body,
+            'MessageMetadata': message_metadata
+        })
+        logging.debug("Added message with ID {} to cache".format(message_id))
 
-        # Build Result
-        result = {
-            "MessageID": message_id,
-            "MessageMetadata": message_metadata,
-            "ResultStatus": result.status_code,
-            "ResultBody": result.text,
-        }
-        result_json = json.dumps(result)
+        # Check for Cache capacity and block if reached
+        while len(self.cached_messages) > self.cache_size:
+            logging.debug("Cache is full, waiting for clearance...".format(message_id))
+            time.sleep(0.1)
 
-        # Publish to result queue
-        logging.info("Sending result for message ID '{}': {}".format(message_id, result_json))
-        self.pushing_connection = pika.BlockingConnection(pika.ConnectionParameters(
-            host=self.rabbitmq_host,
-            port=self.rabbitmq_port,
-            credentials=pika.credentials.PlainCredentials(username=self.rabbitmq_user, password=self.rabbitmq_pass),
-            heartbeat=30
-        ))
-        self.pushing_channel_ref = self.pushing_connection.channel()
-        self.pushing_channel_ref.queue_declare(queue=self.push_channel, durable=True)
-        self.pushing_channel_ref.basic_publish(exchange='', routing_key=self.push_channel, body=result_json)
-        self.pushing_channel_ref.close()
-        self.pushing_connection.close()
+    def process_cached_messages(self):
+        while len(self.cached_messages) > 0:
+            # Get first message from cache
+            message = self.cached_messages[0]
+            # Send Request to target KoboldAI server
+            headers = {
+                "Content-Type": "application/json",
+            }
+            url = self.kobold_ai_host + "/api/v1/generate"
+            result = requests.post(url=url, headers=headers, json=message['MessageBody'])
+            # Remove message from cache, AFTER being processed
+            self.cached_messages.pop(0)
+
+            # Build Result
+            result = {
+                "MessageID": message['MessageID'],
+                "MessageMetadata": message['MessageMetadata'],
+                "ResultStatus": result.status_code,
+                "ResultBody": result.text,
+            }
+            result_json = json.dumps(result)
+
+            # Publish to result queue
+            logging.info("Sending result for message ID '{}': {}".format(message['MessageID'], result_json))
+            self.pushing_connection = pika.BlockingConnection(pika.ConnectionParameters(
+                host=self.rabbitmq_host,
+                port=self.rabbitmq_port,
+                credentials=pika.credentials.PlainCredentials(username=self.rabbitmq_user, password=self.rabbitmq_pass),
+                heartbeat=30
+            ))
+            self.pushing_channel_ref = self.pushing_connection.channel()
+            self.pushing_channel_ref.queue_declare(queue=self.push_channel, durable=True)
+            self.pushing_channel_ref.basic_publish(exchange='', routing_key=self.push_channel, body=result_json)
+            self.pushing_channel_ref.close()
+            self.pushing_connection.close()
 
     def shutdown(self):
         if self.polling_channel_ref is not None:
             self.polling_channel_ref.stop_consuming()
         if self.polling_connection is not None:
             self.polling_connection.close()
+
+
+class CacheProcessingThread(threading.Thread):
+
+    def __init__(self, worker: RabbitMQWorker):
+        # execute the base constructor
+        threading.Thread.__init__(self)
+        # store the reference
+        self.worker = worker
+        # Internal vars
+        self.active = False
+
+    def run(self):
+        if self.worker is not None:
+            logging.info("Starting Cache Processing Thread")
+            self.active = True
+            while self.active:
+                self.worker.process_cached_messages()
+                # Sleep if not processing anything
+                time.sleep(0.01)
+        else:
+            raise RuntimeError("RabbitMQ Worker not initialized")
 
 
 if __name__ == "__main__":
@@ -138,7 +204,7 @@ if __name__ == "__main__":
     Formatter.converter = time.gmtime
     logging.basicConfig(
         stream=sys.stdout,
-        level=logging.INFO,
+        level=logging.DEBUG,
         format='[%(asctime)s] %(levelname)s: %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S %z'
     )
@@ -157,7 +223,10 @@ if __name__ == "__main__":
     parser.add_argument("-pu", "--push_channel", type=str, help="name if the rabbitmq channel to push results to")
 
     # KoboldAI Parameters
-    parser.add_argument("-kh", "--koboldai_host", type=str, help="host+port of the koboldai server")
+    parser.add_argument("-kh", "--kobold_ai_host", type=str, help="host+port of the koboldai server")
+
+    # Worker Parameters
+    parser.add_argument("-cs", "--cache_size", type=int, default=1, help="amount of messages to cache while processing")
 
     # Run
     args = parser.parse_args()
