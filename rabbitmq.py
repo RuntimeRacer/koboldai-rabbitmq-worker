@@ -180,6 +180,9 @@ class RabbitMQWorker:
             self.polling_channel_ref.stop_consuming()
         if self.polling_connection is not None:
             self.polling_connection.close()
+        if self.cache_thread is not None:
+            self.cache_thread.active = False
+            self.cache_thread.join()
 
 
 class CacheProcessingThread(threading.Thread):
