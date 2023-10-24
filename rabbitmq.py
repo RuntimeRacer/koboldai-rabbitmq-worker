@@ -85,7 +85,7 @@ class RabbitMQWorker:
             self.polling_channel_ref.basic_consume(queue=self.poll_channel, on_message_callback=self.handle_prompt_message, auto_ack=True)
             logging.info("Listening for messages on queue {}...".format(self.poll_channel))
             self.polling_channel_ref.start_consuming()
-        except RuntimeError as e:
+        except Exception as e:
             logging.error("Lost connection to RabbitMQ host: {}".format(str(e)))
             # Shutdown cache processing thread
             self.cache_thread.active = False
