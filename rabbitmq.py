@@ -147,7 +147,7 @@ class RabbitMQWorker:
             headers = {
                 "Content-Type": "application/json",
             }
-            url = self.kobold_ai_host + "/api/v1/generate"
+            url = self.kobold_ai_host + "/v1/chat/completions"
             result = requests.post(url=url, headers=headers, json=message['MessageBody'])
             # Remove message from cache, AFTER being processed
             self.cached_messages.pop(0)
