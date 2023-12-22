@@ -25,7 +25,8 @@ class RabbitMQWorker:
             poll_channel: str,
             push_channel: str,
             kobold_ai_host: str,
-            cache_size: int = 1
+            cache_size: int = 1,
+            api_mode: str = "openai"  # either 'openai' for new format, or 'legacy' for old format
     ):
         # Very simple validity checks
         if len(rabbitmq_user) == 0:
@@ -42,6 +43,8 @@ class RabbitMQWorker:
             raise RuntimeError("koboldai_host not set")
         if cache_size < 0:
             raise RuntimeError("invalid cache size")
+        if api_mode not in ["openai", "legacy"]:
+            raise RuntimeError(f"invalid api mode '{api_mode}'")
 
         # Setup Params
         self.rabbitmq_user = rabbitmq_user
@@ -60,6 +63,7 @@ class RabbitMQWorker:
         self.polling_channel_ref = None
         self.pushing_connection = None
         self.pushing_channel_ref = None
+        self.api_mode = api_mode
 
     def run(self):
         # Connect to RabbitMQ
@@ -143,24 +147,44 @@ class RabbitMQWorker:
         while len(self.cached_messages) > 0:
             # Get first message from cache
             message = self.cached_messages[0]
+
             # Send Request to target KoboldAI server
-            headers = {
-                "Content-Type": "application/json",
-            }
-            url = self.kobold_ai_host + "/api/v1/generate"
-            result = requests.post(url=url, headers=headers, json=message['MessageBody'])
-            # Remove message from cache, AFTER being processed
-            self.cached_messages.pop(0)
+            if self.api_mode == "openai":
+                headers = {
+                    "Content-Type": "application/json",
+                }
+                url = self.kobold_ai_host + "/v1/completions"
+                result = requests.post(url=url, headers=headers, json=message['MessageBody'])
+                # Remove message from cache, AFTER being processed
+                self.cached_messages.pop(0)
 
-            # Build Result
-            result = {
-                "MessageID": message['MessageID'],
-                "MessageMetadata": message['MessageMetadata'],
-                "ResultStatus": result.status_code,
-                "ResultBody": result.text,
-            }
-            result_json = json.dumps(result)
+                # Build Result
+                result = {
+                    "MessageID": message['MessageID'],
+                    "MessageMetadata": message['MessageMetadata'],
+                    "ResultStatus": result.status_code,
+                    "ResultBody": result.json(),
+                }
+                result_json = json.dumps(result)
 
+            elif self.api_mode == "legacy":
+                headers = {
+                    "Content-Type": "application/json",
+                }
+                url = self.kobold_ai_host + "/api/v1/generate"
+                result = requests.post(url=url, headers=headers, json=message['MessageBody'])
+                # Remove message from cache, AFTER being processed
+                self.cached_messages.pop(0)
+
+                # Build Result
+                result = {
+                    "MessageID": message['MessageID'],
+                    "MessageMetadata": message['MessageMetadata'],
+                    "ResultStatus": result.status_code,
+                    "ResultBody": result.text,
+                }
+                result_json = json.dumps(result)
+                
             # Publish to result queue
             logging.info("Sending result for message ID '{}': {}".format(message['MessageID'], result_json))
             self.pushing_connection = pika.BlockingConnection(pika.ConnectionParameters(
