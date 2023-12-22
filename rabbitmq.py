@@ -11,8 +11,17 @@ import time
 import pika
 import requests
 import logging
+import functools
 
 from logging import Formatter
+
+
+def ack_message(ch, delivery_tag):
+    if ch.is_open:
+        ch.basic_ack(delivery_tag)
+    else:
+        # Channel is already closed, so we can't ACK this message;
+        pass
 
 
 class RabbitMQWorker:
@@ -56,6 +65,7 @@ class RabbitMQWorker:
         self.kobold_ai_host = kobold_ai_host
 
         # Handling params
+        self.connection_active = False
         self.cache_thread = None
         self.cache_size = cache_size
         self.cached_messages = []
@@ -67,34 +77,41 @@ class RabbitMQWorker:
 
     def run(self):
         # Connect to RabbitMQ
-        try:
-            self.polling_connection = pika.BlockingConnection(pika.ConnectionParameters(
-                host=self.rabbitmq_host,
-                port=self.rabbitmq_port,
-                credentials=pika.credentials.PlainCredentials(username=self.rabbitmq_user, password=self.rabbitmq_pass),
-                heartbeat=30
-            ))
-            self.polling_channel_ref = self.polling_connection.channel()
-            self.polling_channel_ref.queue_declare(queue=self.poll_channel, durable=True)
-        except RuntimeError as e:
-            logging.error("Unable to connect to RabbitMQ host: {}".format(str(e)))
-            raise e
+        while not self.connection_active:
+            try:
+                self.polling_connection = pika.BlockingConnection(pika.ConnectionParameters(
+                    host=self.rabbitmq_host,
+                    port=self.rabbitmq_port,
+                    credentials=pika.credentials.PlainCredentials(username=self.rabbitmq_user, password=self.rabbitmq_pass),
+                    heartbeat=30
+                ))
+                self.polling_channel_ref = self.polling_connection.channel()
+                self.polling_channel_ref.basic_qos(prefetch_count=self.cache_size + 1)
+                self.polling_channel_ref.queue_declare(queue=self.poll_channel, durable=True)
+                self.connection_active = True
+                logging.info("Successfully connected to RabbitMQ host")
+            except RuntimeError as e:
+                logging.error("Unable to connect to RabbitMQ host: {}".format(str(e)))
+                logging.error("Retrying in 10 seconds...")
+                time.sleep(10)
+                continue
 
-        # Add cache processing thread and start it
-        self.cache_thread = CacheProcessingThread(worker=self)
-        self.cache_thread.start()
+            # Add cache processing thread and start it
+            self.cache_thread = CacheProcessingThread(worker=self)
+            self.cache_thread.start()
 
-        # Start listening
-        try:
-            self.polling_channel_ref.basic_consume(queue=self.poll_channel, on_message_callback=self.handle_prompt_message, auto_ack=True)
-            logging.info("Listening for messages on queue {}...".format(self.poll_channel))
-            self.polling_channel_ref.start_consuming()
-        except Exception as e:
-            logging.error("Lost connection to RabbitMQ host: {}".format(str(e)))
-            # Shutdown cache processing thread
-            self.cache_thread.active = False
-            self.cache_thread.join()
-            raise e
+            # Start listening
+            try:
+                self.polling_channel_ref.basic_consume(queue=self.poll_channel, on_message_callback=self.handle_prompt_message)
+                logging.info("Listening for messages on queue {}...".format(self.poll_channel))
+                self.polling_channel_ref.start_consuming()
+            except Exception as e:
+                logging.error("Lost connection to RabbitMQ host: {}".format(str(e)))
+                self.connection_active = False
+                logging.error("Waiting for processing thread to finish...")
+                # Shutdown cache processing thread
+                self.cache_thread.active = False
+                self.cache_thread.join()
 
     """
     Expecting the following structure in param 'body':    
@@ -134,30 +151,32 @@ class RabbitMQWorker:
         self.cached_messages.append({
             'MessageID': message_id,
             'MessageBody': message_body,
-            'MessageMetadata': message_metadata
+            'MessageMetadata': message_metadata,
+            'ChannelRef': channel,
+            'DeliveryTag': method.delivery_tag
         })
         logging.debug("Added message with ID {} to cache".format(message_id))
 
         # Check for Cache capacity and block if reached
         while len(self.cached_messages) > self.cache_size:
             logging.debug("Cache is full, waiting for clearance...".format(message_id))
-            time.sleep(0.1)
 
     def process_cached_messages(self):
         while len(self.cached_messages) > 0:
             # Get first message from cache
             message = self.cached_messages[0]
+            # Get RabbitMQ related data
+            channel = message['ChannelRef']
+            delivery_tag = message['DeliveryTag']
 
             # Send Request to target KoboldAI server
+            result_json = {}
             if self.api_mode == "openai":
                 headers = {
                     "Content-Type": "application/json",
                 }
                 url = self.kobold_ai_host + "/v1/completions"
                 result = requests.post(url=url, headers=headers, json=message['MessageBody'])
-                # Remove message from cache, AFTER being processed
-                self.cached_messages.pop(0)
-
                 # Build Result
                 result = {
                     "MessageID": message['MessageID'],
@@ -173,9 +192,6 @@ class RabbitMQWorker:
                 }
                 url = self.kobold_ai_host + "/api/v1/generate"
                 result = requests.post(url=url, headers=headers, json=message['MessageBody'])
-                # Remove message from cache, AFTER being processed
-                self.cached_messages.pop(0)
-
                 # Build Result
                 result = {
                     "MessageID": message['MessageID'],
@@ -184,20 +200,40 @@ class RabbitMQWorker:
                     "ResultBody": result.text,
                 }
                 result_json = json.dumps(result)
+
+            # Remove message from cache, AFTER being processed
+            self.cached_messages.pop(0)
+            # Send ACK to tasks channel
+            cb = functools.partial(ack_message, channel, delivery_tag)
+            self.polling_connection.add_callback_threadsafe(cb)
                 
             # Publish to result queue
-            logging.info("Sending result for message ID '{}': {}".format(message['MessageID'], result_json))
-            self.pushing_connection = pika.BlockingConnection(pika.ConnectionParameters(
-                host=self.rabbitmq_host,
-                port=self.rabbitmq_port,
-                credentials=pika.credentials.PlainCredentials(username=self.rabbitmq_user, password=self.rabbitmq_pass),
-                heartbeat=30
-            ))
-            self.pushing_channel_ref = self.pushing_connection.channel()
-            self.pushing_channel_ref.queue_declare(queue=self.push_channel, durable=True)
-            self.pushing_channel_ref.basic_publish(exchange='', routing_key=self.push_channel, body=result_json)
-            self.pushing_channel_ref.close()
-            self.pushing_connection.close()
+            logging.info("Processing for message ID '{0}' completed. Sending Result: {1}".format(message['MessageID'], result_json))
+            result_sent = False
+            while not result_sent:
+                try:
+                    self.pushing_connection = pika.BlockingConnection(pika.ConnectionParameters(
+                        host=self.rabbitmq_host,
+                        port=self.rabbitmq_port,
+                        credentials=pika.credentials.PlainCredentials(username=self.rabbitmq_user, password=self.rabbitmq_pass),
+                        heartbeat=30
+                    ))
+                    self.pushing_channel_ref = self.pushing_connection.channel()
+                    self.pushing_channel_ref.queue_declare(queue=self.push_channel, durable=True)
+                    self.pushing_channel_ref.basic_publish(exchange='', routing_key=self.push_channel, body=result_json)
+                    result_sent = True
+                    self.pushing_channel_ref.close()
+                    self.pushing_connection.close()
+                except Exception as e:
+                    if not result_sent:
+                        logging.error("Failed to send result: {0}".format(str(e)))
+                        logging.error("Retrying in 10 seconds...")
+                        time.sleep(10)
+                        continue
+                    else:
+                        logging.warning("Exception after sending result: {0}".format(str(e)))
+
+            logging.info("Result for message ID '{0}' was sent successfully!".format(message['MessageID']))
 
     def shutdown(self):
         if self.polling_channel_ref is not None:

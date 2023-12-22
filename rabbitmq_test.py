@@ -6,7 +6,7 @@ import os
 import pika
 
 connection = pika.BlockingConnection(pika.ConnectionParameters(
-    host='localhost',
+    host='mq.chiefhappiness.co',
     port=6000,
     credentials=pika.credentials.PlainCredentials(
         username=os.environ.get("RABBITMQ_USER"),
