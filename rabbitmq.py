@@ -135,9 +135,12 @@ class RabbitMQWorker:
         logging.debug("Added message with ID {} to cache".format(message_id))
 
         # Check for Cache capacity and block if reached
-        while len(self.cached_messages) > self.cache_size:
+        if len(self.cached_messages) > self.cache_size:
+            # Send log line only once here, to avoid logspam
             logging.debug("Cache is full, waiting for clearance...".format(message_id))
-            time.sleep(0.1)
+            # Wait until cache is cleared
+            while len(self.cached_messages) > self.cache_size:
+                time.sleep(0.1)
 
     def process_cached_messages(self):
         while len(self.cached_messages) > 0:
