@@ -184,6 +184,7 @@ class RabbitMQWorker:
                 # Build Result
                 result = {
                     "MessageID": message['MessageID'],
+                    "MessageBody": message['MessageBody'],
                     "MessageMetadata": message['MessageMetadata'],
                     "ResultStatus": result.status_code,
                     "ResultBody": result.json(),
