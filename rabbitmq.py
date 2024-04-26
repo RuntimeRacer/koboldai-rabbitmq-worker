@@ -35,7 +35,8 @@ class RabbitMQWorker:
             push_channel: str,
             kobold_ai_host: str,
             cache_size: int = 1,
-            api_mode: str = "openai"  # either 'openai' for new format, or 'legacy' for old format
+            api_mode: str = "openai",  # either 'openai' for new format, or 'legacy' for old format
+            model_name: str = ''
     ):
         # Very simple validity checks
         if len(rabbitmq_user) == 0:
@@ -74,6 +75,7 @@ class RabbitMQWorker:
         self.pushing_connection = None
         self.pushing_channel_ref = None
         self.api_mode = api_mode
+        self.model_name = model_name
 
     def run(self):
         # Connect to RabbitMQ
@@ -169,6 +171,7 @@ class RabbitMQWorker:
         while len(self.cached_messages) > 0:
             # Get first message from cache
             message = self.cached_messages[0]
+            message_body = message['MessageBody']
             # Get RabbitMQ related data
             channel = message['ChannelRef']
             delivery_tag = message['DeliveryTag']
@@ -176,11 +179,15 @@ class RabbitMQWorker:
             # Send Request to target KoboldAI server
             result_json = {}
             if self.api_mode == "openai":
+                # Add model name if defined
+                if len(self.model_name) > 0:
+                    message_body['model'] = self.model_name
+
                 headers = {
                     "Content-Type": "application/json",
                 }
                 url = self.kobold_ai_host + "/v1/completions"
-                result = requests.post(url=url, headers=headers, json=message['MessageBody'])
+                result = requests.post(url=url, headers=headers, json=message_body)
                 # Build Result
                 result = {
                     "MessageID": message['MessageID'],
@@ -196,7 +203,7 @@ class RabbitMQWorker:
                     "Content-Type": "application/json",
                 }
                 url = self.kobold_ai_host + "/api/v1/generate"
-                result = requests.post(url=url, headers=headers, json=message['MessageBody'])
+                result = requests.post(url=url, headers=headers, json=message_body)
                 # Build Result
                 result = {
                     "MessageID": message['MessageID'],
@@ -302,6 +309,9 @@ if __name__ == "__main__":
 
     # Worker Parameters
     parser.add_argument("-cs", "--cache_size", type=int, default=1, help="amount of messages to cache while processing")
+
+    # Backend Parameters
+    parser.add_argument("-m", "--model_name", type=int, default=1, help="explicit name of the model, required by some backends")
 
     # Run
     args = parser.parse_args()
