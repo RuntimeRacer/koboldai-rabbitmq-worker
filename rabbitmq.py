@@ -311,7 +311,7 @@ if __name__ == "__main__":
     parser.add_argument("-cs", "--cache_size", type=int, default=1, help="amount of messages to cache while processing")
 
     # Backend Parameters
-    parser.add_argument("-m", "--model_name", type=int, default=1, help="explicit name of the model, required by some backends")
+    parser.add_argument("-m", "--model_name", type=str, default='', help="explicit name of the model, required by some backends")
 
     # Run
     args = parser.parse_args()
