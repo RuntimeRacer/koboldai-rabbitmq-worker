@@ -109,11 +109,8 @@ class RabbitMQWorker:
                 self.polling_channel_ref.start_consuming()
             except Exception as e:
                 logging.error("Lost connection to RabbitMQ host: {}".format(str(e)))
-                self.connection_active = False
-                logging.error("Waiting for processing thread to finish...")
-                # Shutdown cache processing thread
-                self.cache_thread.active = False
-                self.cache_thread.join()
+                # Shutdown connections & processing after exception
+                self.shutdown()
 
     """
     Expecting the following structure in param 'body':    
@@ -222,39 +219,63 @@ class RabbitMQWorker:
             # Publish to result queue
             logging.info("Processing for message ID '{0}' completed. Sending Result: {1}".format(message['MessageID'], result_json))
             result_sent = False
-            while not result_sent:
-                try:
-                    self.pushing_connection = pika.BlockingConnection(pika.ConnectionParameters(
-                        host=self.rabbitmq_host,
-                        port=self.rabbitmq_port,
-                        credentials=pika.credentials.PlainCredentials(username=self.rabbitmq_user, password=self.rabbitmq_pass),
-                        heartbeat=30
-                    ))
-                    self.pushing_channel_ref = self.pushing_connection.channel()
-                    self.pushing_channel_ref.queue_declare(queue=self.push_channel, durable=True)
-                    self.pushing_channel_ref.basic_publish(exchange='', routing_key=self.push_channel, body=result_json)
-                    result_sent = True
-                    self.pushing_channel_ref.close()
-                    self.pushing_connection.close()
-                except Exception as e:
-                    if not result_sent:
-                        logging.error("Failed to send result: {0}".format(str(e)))
-                        logging.error("Retrying in 10 seconds...")
-                        time.sleep(10)
-                        continue
-                    else:
-                        logging.warning("Exception after sending result: {0}".format(str(e)))
+            try:
+                self.pushing_connection = pika.BlockingConnection(pika.ConnectionParameters(
+                    host=self.rabbitmq_host,
+                    port=self.rabbitmq_port,
+                    credentials=pika.credentials.PlainCredentials(username=self.rabbitmq_user, password=self.rabbitmq_pass),
+                    heartbeat=30
+                ))
+                self.pushing_channel_ref = self.pushing_connection.channel()
+                self.pushing_channel_ref.queue_declare(queue=self.push_channel, durable=True)
+                self.pushing_channel_ref.basic_publish(exchange='', routing_key=self.push_channel, body=result_json)
+                result_sent = True
+                self.pushing_channel_ref.close()
+                self.pushing_connection.close()
+            except Exception as e:
+                if not result_sent:
+                    logging.error("Failed to send result: {0}".format(str(e)))
+                else:
+                    logging.warning("Exception after sending result: {0}".format(str(e)))
 
-            logging.info("Result for message ID '{0}' was sent successfully!".format(message['MessageID']))
+                # Shutdown connections & processing after exception
+                self.shutdown()
+
+            if result_sent:
+                logging.info("Result for message ID '{0}' was sent successfully!".format(message['MessageID']))
 
     def shutdown(self):
-        if self.polling_channel_ref is not None:
-            self.polling_channel_ref.stop_consuming()
-        if self.polling_connection is not None:
-            self.polling_connection.close()
         if self.cache_thread is not None:
             self.cache_thread.active = False
+            self.cached_messages.clear()
             self.cache_thread.join()
+
+        try:
+            if self.pushing_channel_ref is not None:
+                self.pushing_channel_ref.close()
+        except Exception as e:
+            logging.warning("failed to shutdown pushing channel gracefully: {0}".format(str(e)))
+
+        try:
+            if self.pushing_connection is not None:
+                self.pushing_connection.close()
+        except Exception as e:
+            logging.warning("failed to shutdown pushing connection gracefully: {0}".format(str(e)))
+
+        try:
+            if self.polling_channel_ref is not None:
+                self.polling_channel_ref.stop_consuming()
+                self.polling_channel_ref.close()
+        except Exception as e:
+            logging.warning("failed to shutdown polling channel gracefully: {0}".format(str(e)))
+
+        try:
+            if self.polling_connection is not None:
+                self.polling_connection.close()
+        except Exception as e:
+            logging.warning("failed to shutdown polling connection gracefully: {0}".format(str(e)))
+
+        self.connection_active = False
 
 
 class CacheProcessingThread(threading.Thread):
