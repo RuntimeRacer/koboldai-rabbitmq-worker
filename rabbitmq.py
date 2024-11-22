@@ -250,30 +250,30 @@ class RabbitMQWorker:
             self.cached_messages.clear()
             self.cache_thread.join()
 
-        try:
-            if self.pushing_channel_ref is not None:
+        if self.pushing_channel_ref is not None:
+            try:
                 self.pushing_channel_ref.close()
-        except Exception as e:
-            logging.warning("failed to shutdown pushing channel gracefully: {0}".format(str(e)))
+            except Exception as e:
+                logging.warning("failed to shutdown pushing channel gracefully: {0}".format(str(e)))
 
-        try:
-            if self.pushing_connection is not None:
+        if self.pushing_connection is not None:
+            try:
                 self.pushing_connection.close()
-        except Exception as e:
-            logging.warning("failed to shutdown pushing connection gracefully: {0}".format(str(e)))
+            except Exception as e:
+                logging.warning("failed to shutdown pushing connection gracefully: {0}".format(str(e)))
 
-        try:
-            if self.polling_channel_ref is not None:
+        if self.polling_channel_ref is not None:
+            try:
                 self.polling_channel_ref.stop_consuming()
                 self.polling_channel_ref.close()
-        except Exception as e:
-            logging.warning("failed to shutdown polling channel gracefully: {0}".format(str(e)))
+            except Exception as e:
+                logging.warning("failed to shutdown polling channel gracefully: {0}".format(str(e)))
 
-        try:
-            if self.polling_connection is not None:
+        if self.polling_connection is not None:
+            try:
                 self.polling_connection.close()
-        except Exception as e:
-            logging.warning("failed to shutdown polling connection gracefully: {0}".format(str(e)))
+            except Exception as e:
+                logging.warning("failed to shutdown polling connection gracefully: {0}".format(str(e)))
 
         self.connection_active = False
 
