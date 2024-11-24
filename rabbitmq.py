@@ -33,9 +33,9 @@ class RabbitMQWorker:
             rabbitmq_port: int,
             poll_channel: str,
             push_channel: str,
-            kobold_ai_host: str,
+            inference_server_host: str,
             cache_size: int = 1,
-            api_mode: str = "openai",  # either 'openai' for new format, or 'legacy' for old format
+            api_mode: str = "openai",  # either 'openai' for new format, or 'legacy' for old KoboldAI format
             model_name: str = ''
     ):
         # Very simple validity checks
@@ -49,8 +49,8 @@ class RabbitMQWorker:
             raise RuntimeError("poll_channel not set")
         if len(push_channel) == 0:
             raise RuntimeError("push_channel not set")
-        if len(kobold_ai_host) == 0:
-            raise RuntimeError("koboldai_host not set")
+        if len(inference_server_host) == 0:
+            raise RuntimeError("inference_server_host not set")
         if cache_size < 0:
             raise RuntimeError("invalid cache size")
         if api_mode not in ["openai", "legacy"]:
@@ -63,7 +63,7 @@ class RabbitMQWorker:
         self.rabbitmq_port = rabbitmq_port
         self.poll_channel = poll_channel
         self.push_channel = push_channel
-        self.kobold_ai_host = kobold_ai_host
+        self.inference_server_host = inference_server_host
 
         # Handling params
         self.connection_active = False
@@ -173,7 +173,7 @@ class RabbitMQWorker:
             channel = message['ChannelRef']
             delivery_tag = message['DeliveryTag']
 
-            # Send Request to target KoboldAI server
+            # Send Request to target inference server
             result_json = {}
             if self.api_mode == "openai":
                 # Add model name if defined
@@ -183,8 +183,16 @@ class RabbitMQWorker:
                 headers = {
                     "Content-Type": "application/json",
                 }
-                url = self.kobold_ai_host + "/v1/completions"
-                result = requests.post(url=url, headers=headers, json=message_body)
+                url = self.inference_server_host + "/v1/completions"
+
+                try:
+                    result = requests.post(url=url, headers=headers, json=message_body)
+                except Exception as e:
+                    logging.error("Inference server was unable to process message: {}".format(str(e)))
+                    logging.error("Retrying in 10 seconds...")
+                    time.sleep(10)
+                    continue
+
                 # Build Result
                 result = {
                     "MessageID": message['MessageID'],
@@ -199,7 +207,7 @@ class RabbitMQWorker:
                 headers = {
                     "Content-Type": "application/json",
                 }
-                url = self.kobold_ai_host + "/api/v1/generate"
+                url = self.inference_server_host + "/api/v1/generate"
                 result = requests.post(url=url, headers=headers, json=message_body)
                 # Build Result
                 result = {
@@ -326,7 +334,7 @@ if __name__ == "__main__":
     parser.add_argument("-pu", "--push_channel", type=str, help="name if the rabbitmq channel to push results to")
 
     # KoboldAI Parameters
-    parser.add_argument("-kh", "--kobold_ai_host", type=str, help="host+port of the koboldai server")
+    parser.add_argument("-ih", "--inference_server_host", type=str, help="host+port of the inference server")
 
     # Worker Parameters
     parser.add_argument("-cs", "--cache_size", type=int, default=1, help="amount of messages to cache while processing")
