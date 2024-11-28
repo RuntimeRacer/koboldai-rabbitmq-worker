@@ -194,29 +194,48 @@ class RabbitMQWorker:
                     continue
 
                 # Build Result
-                result = {
-                    "MessageID": message['MessageID'],
-                    "MessageBody": message['MessageBody'],
-                    "MessageMetadata": message['MessageMetadata'],
-                    "ResultStatus": result.status_code,
-                    "ResultBody": result.json(),
-                }
-                result_json = json.dumps(result)
+                try:
+                    result = {
+                        "MessageID": message['MessageID'],
+                        "MessageBody": message['MessageBody'],
+                        "MessageMetadata": message['MessageMetadata'],
+                        "ResultStatus": result.status_code,
+                        "ResultBody": result.json(),
+                    }
+                    result_json = json.dumps(result)
+                except Exception as e:
+                    logging.error("failed to decode result from inference server: {}".format(str(e)))
+                    logging.error("Retrying in 10 seconds...")
+                    time.sleep(10)
+                    continue
 
             elif self.api_mode == "legacy":
                 headers = {
                     "Content-Type": "application/json",
                 }
                 url = self.inference_server_host + "/api/v1/generate"
-                result = requests.post(url=url, headers=headers, json=message_body)
+                try:
+                    result = requests.post(url=url, headers=headers, json=message_body)
+                except Exception as e:
+                    logging.error("Inference server was unable to process message: {}".format(str(e)))
+                    logging.error("Retrying in 10 seconds...")
+                    time.sleep(10)
+                    continue
+
                 # Build Result
-                result = {
-                    "MessageID": message['MessageID'],
-                    "MessageMetadata": message['MessageMetadata'],
-                    "ResultStatus": result.status_code,
-                    "ResultBody": result.text,
-                }
-                result_json = json.dumps(result)
+                try:
+                    result = {
+                        "MessageID": message['MessageID'],
+                        "MessageMetadata": message['MessageMetadata'],
+                        "ResultStatus": result.status_code,
+                        "ResultBody": result.text,
+                    }
+                    result_json = json.dumps(result)
+                except Exception as e:
+                    logging.error("failed to decode result from inference server: {}".format(str(e)))
+                    logging.error("Retrying in 10 seconds...")
+                    time.sleep(10)
+                    continue
 
             # Remove message from cache, AFTER being processed
             self.cached_messages.pop(0)
