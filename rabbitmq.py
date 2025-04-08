@@ -92,7 +92,7 @@ class RabbitMQWorker:
                 self.polling_channel_ref.queue_declare(queue=self.poll_channel, durable=True)
                 self.connection_active = True
                 logging.info("Successfully connected to RabbitMQ host")
-            except RuntimeError as e:
+            except Exception as e:
                 logging.error("Unable to connect to RabbitMQ host: {}".format(str(e)))
                 logging.error("Retrying in 10 seconds...")
                 time.sleep(10)
@@ -186,7 +186,7 @@ class RabbitMQWorker:
                 url = self.inference_server_host + "/v1/completions"
 
                 try:
-                    result = requests.post(url=url, headers=headers, json=message_body)
+                    result = requests.post(url=url, headers=headers, json=message_body, timeout=30)
                 except Exception as e:
                     logging.error("Inference server was unable to process message: {}".format(str(e)))
                     logging.error("Retrying in 10 seconds...")
@@ -215,7 +215,7 @@ class RabbitMQWorker:
                 }
                 url = self.inference_server_host + "/api/v1/generate"
                 try:
-                    result = requests.post(url=url, headers=headers, json=message_body)
+                    result = requests.post(url=url, headers=headers, json=message_body, timeout=30)
                 except Exception as e:
                     logging.error("Inference server was unable to process message: {}".format(str(e)))
                     logging.error("Retrying in 10 seconds...")
@@ -242,7 +242,7 @@ class RabbitMQWorker:
             # Send ACK to tasks channel
             cb = functools.partial(ack_message, channel, delivery_tag)
             self.polling_connection.add_callback_threadsafe(cb)
-                
+
             # Publish to result queue
             logging.info("Processing for message ID '{0}' completed. Sending Result: {1}".format(message['MessageID'], result_json))
             result_sent = False
