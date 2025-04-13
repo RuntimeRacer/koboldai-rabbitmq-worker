@@ -15,7 +15,6 @@ ENV RABBITMQ_PORT=5672
 ENV POLL_QUEUE=""
 ENV PUSH_QUEUE=""
 ENV INFERENCE_SERVER_HOST=""
-ENV CACHE_SIZE=1
 ENV MODEL_NAME=""
 
 ENTRYPOINT python3 rabbitmq.py \
@@ -26,5 +25,4 @@ ENTRYPOINT python3 rabbitmq.py \
     -pl "$POLL_QUEUE" \
     -pu "$PUSH_QUEUE" \
     -ih "$INFERENCE_SERVER_HOST" \
-    -cs "$CACHE_SIZE" \
     -m "$MODEL_NAME"
